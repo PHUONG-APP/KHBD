@@ -34,7 +34,8 @@ import {
   ExternalLink,
   CheckCircle2,
   Send,
-  MessageSquarePlus
+  MessageSquarePlus,
+  Key
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import Markdown from 'react-markdown';
@@ -43,9 +44,10 @@ import rehypeKatex from 'rehype-katex';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import mammoth from 'mammoth';
-import { generateLessonPlan, regenerateActivitySection, LessonPlanRequest } from './services/geminiService';
+import { generateLessonPlan, regenerateActivitySection, LessonPlanRequest, hasGeminiApiKey, getGeminiApiKeyStatus, setGeminiApiKey } from './services/geminiService';
 import { exportToDocx, exportPromptMarkdownToDocx } from './utils/docxExport';
 import { PromptIllustrator } from './components/PromptIllustrator';
+import { ApiKeyModal } from './components/ApiKeyModal';
 
 interface AttachedFile {
   id: string;
@@ -871,6 +873,25 @@ export function cleanSectionIV(text: string): string {
 }
 
 export default function App() {
+  const [showApiKeyModal, setShowApiKeyModal] = useState(false);
+  const [apiKeyStatus, setApiKeyStatus] = useState(getGeminiApiKeyStatus());
+  const [inlineApiKeyInput, setInlineApiKeyInput] = useState('');
+
+  const refreshApiKeyStatus = () => {
+    setApiKeyStatus(getGeminiApiKeyStatus());
+  };
+
+  const handleSaveInlineApiKey = () => {
+    const trimmed = inlineApiKeyInput.trim();
+    if (!trimmed) {
+      alert('Vui lòng dán mã Google Gemini API Key.');
+      return;
+    }
+    setGeminiApiKey(trimmed);
+    refreshApiKeyStatus();
+    setInlineApiKeyInput('');
+  };
+
   const [mode, setMode] = useState<'new' | 'vbt' | 'upgrade'>('new');
   const [subject, setSubject] = useState('Toán');
   const [grade, setGrade] = useState('1');
@@ -1239,12 +1260,28 @@ export default function App() {
         file: mediaFiles.length > 0 ? mediaFiles[0] : undefined // fallback
       };
 
+      // Kiểm tra API Key trước khi gọi trực tiếp Google Gemini API
+      if (!hasGeminiApiKey()) {
+        setShowApiKeyModal(true);
+        alert("⚠️ Chưa có Google Gemini API Key!\n\nVui lòng bấm vào nút 'Cài đặt API Key' ở góc trên để nhập API Key của bạn (hoặc cấu hình biến môi trường GEMINI_API_KEY trên Vercel).");
+        setGeneratingModes(prev => ({ ...prev, [currentMode]: false }));
+        return;
+      }
+
       const plan = await generateLessonPlan(request);
       setModeSelectedPeriod(prev => ({ ...prev, [currentMode]: '1' }));
       setResults(prev => ({ ...prev, [currentMode]: plan }));
     } catch (error: any) {
       console.error(error);
       const errMsg = error?.message || "";
+      if (
+        errMsg.includes("API Key") ||
+        errMsg.includes("GEMINI_API_KEY") ||
+        errMsg.includes("403") ||
+        errMsg.includes("API_KEY_INVALID")
+      ) {
+        setShowApiKeyModal(true);
+      }
       alert(errMsg || (currentMode === 'upgrade' 
         ? "Có lỗi xảy ra khi nâng cấp kế hoạch bài dạy. Vui lòng kiểm tra lại và thử lại." 
         : currentMode === 'vbt'
@@ -1620,6 +1657,13 @@ export default function App() {
 
   const handleRegenerateActivityWithPrompt = async () => {
     if (!result || !activityModal || regeneratingActivity) return;
+
+    if (!hasGeminiApiKey()) {
+      setShowApiKeyModal(true);
+      alert("⚠️ Chưa có Google Gemini API Key!\n\nVui lòng bấm vào nút 'Cài đặt API Key' ở góc trên để nhập API Key của bạn (hoặc cấu hình biến môi trường GEMINI_API_KEY trên Vercel).");
+      return;
+    }
+
     const { activityName, shortLabel } = activityModal;
     setRegeneratingActivity(activityName);
 
@@ -1704,7 +1748,16 @@ export default function App() {
       }
     } catch (error: any) {
       console.error('Lỗi khi tạo lại hoạt động:', error);
-      alert(error?.message || 'Không thể tạo lại phần này. Vui lòng thử lại.');
+      const msg = error?.message || '';
+      if (
+        msg.includes('API Key') ||
+        msg.includes('GEMINI_API_KEY') ||
+        msg.includes('403') ||
+        msg.includes('API_KEY_INVALID')
+      ) {
+        setShowApiKeyModal(true);
+      }
+      alert(msg || 'Không thể tạo lại phần này. Vui lòng thử lại.');
     } finally {
       setRegeneratingActivity(null);
     }
@@ -1808,8 +1861,24 @@ export default function App() {
             <h1 className="text-xl font-bold text-slate-800 hidden sm:block">Trợ Lý Giáo Viên Tiểu Học</h1>
             <h1 className="text-xl font-bold text-slate-800 sm:hidden">Trợ Lý Kế Hoạch Bài Dạy</h1>
           </div>
-          <div className="flex items-center gap-4">
-            <span className="text-sm text-slate-500 hidden md:block">Soạn kế hoạch bài dạy thông minh với AI</span>
+          <div className="flex items-center gap-3 sm:gap-4">
+            <span className="text-sm text-slate-500 hidden lg:block">Soạn kế hoạch bài dạy thông minh với AI</span>
+
+            {/* Nút Cài đặt Google Gemini API Key */}
+            <button
+              onClick={() => setShowApiKeyModal(true)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all shadow-xs ${
+                apiKeyStatus.hasKey
+                  ? "bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100"
+                  : "bg-amber-50 text-amber-900 border-amber-400 hover:bg-amber-100 ring-2 ring-amber-400/50"
+              }`}
+              title="Cài đặt Google Gemini API Key để chạy trên Vercel"
+            >
+              <Key className={`w-3.5 h-3.5 ${apiKeyStatus.hasKey ? "text-emerald-600" : "text-amber-600"}`} />
+              <span className="hidden sm:inline">{apiKeyStatus.hasKey ? "API Key: Đã kết nối" : "Cài đặt API Key"}</span>
+              <span className="sm:hidden">{apiKeyStatus.hasKey ? "API Key" : "Cài API Key"}</span>
+              <span className={`w-2 h-2 rounded-full shrink-0 ${apiKeyStatus.hasKey ? "bg-emerald-500" : "bg-amber-500 animate-ping"}`} />
+            </button>
           </div>
         </div>
       </header>
@@ -1834,6 +1903,46 @@ export default function App() {
                 </button>
               )}
             </div>
+
+            {/* Ô nhập API Key trực tiếp trên giao diện khi chưa cấu hình */}
+            {!apiKeyStatus.hasKey && (
+              <div className="mb-4 bg-amber-50/90 border border-amber-300 rounded-xl p-3 text-xs space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 font-semibold text-amber-900">
+                    <Key className="w-4 h-4 text-amber-600" />
+                    <span>Google Gemini API Key:</span>
+                  </div>
+                  <a
+                    href="https://aistudio.google.com/app/apikey"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-[11px] font-medium text-blue-600 hover:underline inline-flex items-center gap-0.5"
+                  >
+                    <span>Lấy key miễn phí</span>
+                    <ExternalLink className="w-2.5 h-2.5" />
+                  </a>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="password"
+                    placeholder="Dán mã API Key (AIzaSy...)"
+                    value={inlineApiKeyInput}
+                    onChange={(e) => setInlineApiKeyInput(e.target.value)}
+                    className="flex-1 px-2.5 py-1.5 bg-white border border-amber-300 rounded-lg text-xs font-mono text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSaveInlineApiKey}
+                    className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white font-semibold rounded-lg text-xs transition-colors shrink-0 shadow-xs"
+                  >
+                    Lưu
+                  </button>
+                </div>
+                <p className="text-[10px] text-amber-700 leading-tight">
+                  Khóa sẽ được lưu an toàn trong trình duyệt (localStorage) để gọi trực tiếp Google Gemini khi chạy trên Vercel.
+                </p>
+              </div>
+            )}
 
             <form ref={formRef} onSubmit={handleSubmit} className="space-y-4">
               {/* Chế độ soạn */}
@@ -2893,6 +3002,13 @@ export default function App() {
           <p className="text-blue-600">Công cụ hỗ trợ giảng dạy thông minh. Tác giả Nguyễn Thanh Phương</p>
         </div>
       </footer>
+
+      {/* Modal Cài đặt Google Gemini API Key */}
+      <ApiKeyModal
+        isOpen={showApiKeyModal}
+        onClose={() => setShowApiKeyModal(false)}
+        onKeySaved={refreshApiKeyStatus}
+      />
     </div>
   );
 }

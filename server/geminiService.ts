@@ -1,12 +1,242 @@
 import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
 
+export function getGeminiApiKey(): string {
+  // 1. Kiểm tra trong localStorage (khi người dùng nhập thủ công trên giao diện)
+  if (typeof window !== "undefined") {
+    try {
+      const stored = localStorage.getItem("gemini_api_key") || localStorage.getItem("GEMINI_API_KEY");
+      if (stored && stored.trim()) {
+        return stored.trim();
+      }
+    } catch (e) {}
+  }
+
+  // 2. Kiểm tra biến môi trường process.env.GEMINI_API_KEY (được Vite define hoặc Node.js server truyền vào)
+  try {
+    if (typeof process !== "undefined" && process.env?.GEMINI_API_KEY) {
+      const envKey = process.env.GEMINI_API_KEY.trim();
+      if (envKey) return envKey;
+    }
+  } catch (e) {}
+
+  // 3. Kiểm tra biến môi trường Vite import.meta.env
+  try {
+    const meta = (import.meta as any)?.env;
+    if (meta?.VITE_GEMINI_API_KEY?.trim()) {
+      return meta.VITE_GEMINI_API_KEY.trim();
+    }
+    if (meta?.GEMINI_API_KEY?.trim()) {
+      return meta.GEMINI_API_KEY.trim();
+    }
+  } catch (e) {}
+
+  return "";
+}
+
+export function setGeminiApiKey(key: string): void {
+  if (typeof window !== "undefined") {
+    try {
+      if (key && key.trim()) {
+        localStorage.setItem("gemini_api_key", key.trim());
+      } else {
+        localStorage.removeItem("gemini_api_key");
+        localStorage.removeItem("GEMINI_API_KEY");
+      }
+    } catch (e) {}
+  }
+}
+
+export function hasGeminiApiKey(): boolean {
+  return !!getGeminiApiKey();
+}
+
+export function getGeminiApiKeyStatus(): { hasKey: boolean; source: 'custom' | 'env' | 'none'; maskedKey: string } {
+  let custom = "";
+  if (typeof window !== "undefined") {
+    try {
+      custom = localStorage.getItem("gemini_api_key") || localStorage.getItem("GEMINI_API_KEY") || "";
+    } catch (e) {}
+  }
+  if (custom.trim()) {
+    const k = custom.trim();
+    return {
+      hasKey: true,
+      source: "custom",
+      maskedKey: k.length > 8 ? `${k.slice(0, 4)}...${k.slice(-4)}` : "••••••••",
+    };
+  }
+
+  const envKey = getGeminiApiKey();
+  if (envKey) {
+    return {
+      hasKey: true,
+      source: "env",
+      maskedKey: envKey.length > 8 ? `${envKey.slice(0, 4)}...${envKey.slice(-4)}` : "••••••••",
+    };
+  }
+
+  return { hasKey: false, source: "none", maskedKey: "" };
+}
+
+export async function testGeminiApiKey(testKey?: string): Promise<{ success: boolean; message: string }> {
+  const key = testKey?.trim() || getGeminiApiKey();
+  if (!key) {
+    return { success: false, message: "Vui lòng nhập API Key để kiểm tra kết nối." };
+  }
+  try {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(key)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: "ping" }] }],
+      }),
+    });
+    if (res.ok) {
+      return { success: true, message: "Kết nối Google Gemini thành công! API Key hoạt động bình thường." };
+    }
+    const errData = await res.json().catch(() => ({}));
+    const errMsg = errData?.error?.message || `Mã lỗi HTTP ${res.status}`;
+    if (errMsg.includes("API_KEY_INVALID") || res.status === 400) {
+      return { success: false, message: "API Key không hợp lệ. Vui lòng kiểm tra lại mã khóa." };
+    }
+    if (res.status === 403) {
+      return { success: false, message: "API Key bị từ chối quyền truy cập (403 Forbidden)." };
+    }
+    if (res.status === 429) {
+      return { success: false, message: "API Key đã vượt quá hạn mức yêu cầu (Rate Limit / Quota Exceeded)." };
+    }
+    return { success: false, message: `Lỗi kết nối (${res.status}): ${errMsg}` };
+  } catch (e: any) {
+    return { success: false, message: `Lỗi mạng hoặc không thể kết nối tới máy chủ Google: ${e?.message || ""}` };
+  }
+}
+
+export async function executeGeminiPrompt(
+  promptParts: any[],
+  systemInstruction?: string,
+  temperature: number = 0.7
+): Promise<string> {
+  const apiKey = getGeminiApiKey();
+  if (!apiKey) {
+    throw new Error(
+      "Chưa có Google Gemini API Key! Vui lòng bấm vào nút 'Cài đặt API Key' ở góc trên để nhập API Key của bạn (hoặc cấu hình biến môi trường GEMINI_API_KEY trên Vercel)."
+    );
+  }
+
+  // Danh sách mô hình ưu tiên: gemini-2.5-flash theo yêu cầu của Thầy/Cô, dự phòng gemini-3.8-flash, gemini-3.6-flash
+  const models = ["gemini-2.5-flash", "gemini-3.8-flash", "gemini-3.6-flash", "gemini-flash-latest"];
+  let lastError: any = null;
+
+  for (const model of models) {
+    // 1. Gọi trực tiếp fetch REST API tới Google Gemini endpoint: https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=...
+    try {
+      const restUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+      
+      const formattedParts = promptParts.map((part) => {
+        if (part.inlineData) {
+          return {
+            inline_data: {
+              mime_type: part.inlineData.mimeType || part.inlineData.mime_type,
+              data: part.inlineData.data,
+            },
+          };
+        }
+        if (part.inline_data) {
+          return {
+            inline_data: {
+              mime_type: part.inline_data.mime_type || part.inline_data.mimeType,
+              data: part.inline_data.data,
+            },
+          };
+        }
+        return part;
+      });
+
+      const reqBody: any = {
+        contents: [{ parts: formattedParts }],
+        generationConfig: {
+          temperature,
+        },
+      };
+      if (systemInstruction) {
+        reqBody.systemInstruction = {
+          parts: [{ text: systemInstruction }],
+        };
+      }
+
+      const res = await fetch(restUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(reqBody),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const outputText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (outputText && outputText.trim()) {
+          return outputText;
+        }
+      } else {
+        const errorJson = await res.json().catch(() => ({}));
+        const errDetail = errorJson?.error?.message || `Lỗi HTTP ${res.status}`;
+        if (res.status === 400 && (errDetail.includes("API_KEY_INVALID") || errDetail.includes("key not valid"))) {
+          throw new Error("API Key Google Gemini không hợp lệ. Vui lòng bấm vào 'Cài đặt API Key' để kiểm tra lại.");
+        }
+        if (res.status === 429) {
+          throw new Error("Đã vượt quá hạn mức yêu cầu của Google Gemini API (Quota Exceeded / Rate Limit). Vui lòng đợi 1-2 phút hoặc dùng API Key khác.");
+        }
+        if (res.status === 403) {
+          throw new Error("API Key Google Gemini bị từ chối truy cập (403 Forbidden). Vui lòng kiểm tra quyền hạn của API Key.");
+        }
+        lastError = new Error(errDetail);
+      }
+    } catch (fetchErr: any) {
+      const msg = fetchErr?.message || "";
+      if (msg.includes("không hợp lệ") || msg.includes("Quota Exceeded") || msg.includes("403 Forbidden")) {
+        throw fetchErr;
+      }
+      lastError = fetchErr;
+    }
+
+    // 2. Dự phòng qua thư viện @google/genai SDK
+    try {
+      const genAI = new GoogleGenAI({ apiKey });
+      const response = await genAI.models.generateContent({
+        model,
+        contents: [{ parts: promptParts }],
+        config: {
+          systemInstruction: systemInstruction || undefined,
+          temperature,
+        },
+      });
+      if (response.text && response.text.trim()) {
+        return response.text;
+      }
+    } catch (sdkError: any) {
+      lastError = sdkError;
+      const errMsg = sdkError?.message || "";
+      if (errMsg.includes("API_KEY_INVALID") || errMsg.includes("key not valid")) {
+        throw new Error("API Key Google Gemini không hợp lệ. Vui lòng bấm vào 'Cài đặt API Key' để kiểm tra lại.");
+      }
+      if (errMsg.includes("429") || errMsg.includes("RESOURCE_EXHAUSTED")) {
+        throw new Error("Đã vượt quá hạn mức yêu cầu của Google Gemini API (Quota Exceeded / Rate Limit). Vui lòng đợi 1-2 phút hoặc dùng API Key khác.");
+      }
+    }
+  }
+
+  throw new Error(
+    lastError?.message ||
+    "Không thể kết nối đến Google Gemini API. Vui lòng kiểm tra lại API Key và kết nối mạng."
+  );
+}
+
 let genAIClient: GoogleGenAI | null = null;
 function getGenAI(): GoogleGenAI {
+  const apiKey = getGeminiApiKey();
+  if (!apiKey) {
+    throw new Error("Chưa cấu hình Google Gemini API Key. Vui lòng nhập API Key để tiếp tục.");
+  }
   if (!genAIClient) {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error("Chưa cấu hình GEMINI_API_KEY trên máy chủ.");
-    }
     genAIClient = new GoogleGenAI({ apiKey });
   }
   return genAIClient;
@@ -823,34 +1053,10 @@ LƯU Ý ĐẶC BIỆT:
   }
 
   try {
-    const genAI = getGenAI();
-    let response: GenerateContentResponse;
-    try {
-      response = await genAI.models.generateContent({
-        model,
-        contents: [{ parts: promptParts }],
-        config: {
-          systemInstruction: SYSTEM_INSTRUCTION,
-          temperature: 0.7,
-        },
-      });
-    } catch (modelErr: any) {
-      const errMsg = modelErr?.message || "";
-      if (errMsg.includes("404") || errMsg.includes("not available") || errMsg.includes("NOT_FOUND")) {
-        response = await genAI.models.generateContent({
-          model: "gemini-3.8-flash",
-          contents: [{ parts: promptParts }],
-          config: {
-            systemInstruction: SYSTEM_INSTRUCTION,
-            temperature: 0.7,
-          },
-        });
-      } else {
-        throw modelErr;
-      }
+    let text = await executeGeminiPrompt(promptParts, SYSTEM_INSTRUCTION, 0.7);
+    if (!text || !text.trim()) {
+      text = "Không thể tạo kế hoạch bài dạy. Vui lòng thử lại.";
     }
-
-    let text = response.text || "Không thể tạo kế hoạch bài dạy. Vui lòng thử lại.";
     
     // Post-process to remove accidental double newlines in Section I for all lessons
     if (text.includes('I. YÊU CẦU CẦN ĐẠT:')) {
@@ -1741,34 +1947,8 @@ QUY TẮC BẮT BUỘC KHI SOẠN:
 5. Chỉ trả về DUY NHẤT một dòng bảng Markdown hoàn chỉnh của hoạt động này (bắt đầu bằng | và kết thúc bằng |). Không thêm bất kỳ lời chào, giải thích, markdown fence hay ký tự thừa nào khác.`;
 
   try {
-    const genAI = getGenAI();
-    let response: GenerateContentResponse;
-    try {
-      response = await genAI.models.generateContent({
-        model,
-        contents: [{ parts: [{ text: prompt }] }],
-        config: {
-          systemInstruction: SYSTEM_INSTRUCTION,
-          temperature: 0.7,
-        },
-      });
-    } catch (modelErr: any) {
-      const errMsg = modelErr?.message || "";
-      if (errMsg.includes("404") || errMsg.includes("not available") || errMsg.includes("NOT_FOUND")) {
-        response = await genAI.models.generateContent({
-          model: "gemini-3.8-flash",
-          contents: [{ parts: [{ text: prompt }] }],
-          config: {
-            systemInstruction: SYSTEM_INSTRUCTION,
-            temperature: 0.7,
-          },
-        });
-      } else {
-        throw modelErr;
-      }
-    }
-
-    let text = response.text?.trim() || "";
+    let text = await executeGeminiPrompt([{ text: prompt }], SYSTEM_INSTRUCTION, 0.7);
+    text = text.trim();
     // Clean code blocks if present
     if (text.startsWith("```markdown")) {
       text = text.replace(/^```markdown\s*/, "").replace(/```$/, "").trim();
