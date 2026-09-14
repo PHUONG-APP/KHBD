@@ -35,7 +35,8 @@ import {
   CheckCircle2,
   Send,
   MessageSquarePlus,
-  Key
+  Key,
+  Calendar
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import Markdown from 'react-markdown';
@@ -44,7 +45,7 @@ import rehypeKatex from 'rehype-katex';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import mammoth from 'mammoth';
-import { generateLessonPlan, regenerateActivitySection, LessonPlanRequest, hasGeminiApiKey, getGeminiApiKeyStatus, setGeminiApiKey } from './services/geminiService';
+import { generateLessonPlan, regenerateActivitySection, LessonPlanRequest, hasGeminiApiKey, getGeminiApiKeyStatus, setGeminiApiKey, formatVietnameseDate } from './services/geminiService';
 import { exportToDocx, exportPromptMarkdownToDocx } from './utils/docxExport';
 import { PromptIllustrator } from './components/PromptIllustrator';
 import { ApiKeyModal } from './components/ApiKeyModal';
@@ -630,7 +631,8 @@ export function syncHeaderSubjectAndGrade(
   selectedGrade?: string,
   currentPeriod?: string,
   totalPeriods?: string,
-  mode?: 'new' | 'vbt' | 'upgrade'
+  mode?: 'new' | 'vbt' | 'upgrade',
+  lessonDate?: string
 ): string {
   if (!text || !selectedSubject) return text;
 
@@ -738,6 +740,27 @@ export function syncHeaderSubjectAndGrade(
 
   // Dọn dẹp các thẻ <br /> liên tiếp thừa do việc xóa dòng tạo ra
   text = text.replace(/(<br\s*\/?>\s*){3,}/gi, '<br />\n<br />\n');
+
+  // 4. Chuẩn hóa dòng "Thời gian thực hiện:"
+  const thoiGianText = lessonDate && lessonDate.trim()
+    ? (lessonDate.includes('ngày') ? lessonDate.trim() : formatVietnameseDate(lessonDate))
+    : 'ngày ... tháng ... năm 202...';
+
+  const styledThoiGianRegex = /(<span style="color:\s*blue">Thời gian thực hiện:<\/span>\s*)(?:<span[^>]*>)?(?:\*\*)?(?:ngày\s*[\d\.]+\s*tháng\s*[\d\.]+\s*năm\s*[\d\.]+|[^\n\r<;]+)(?:\*\*)?(?:<\/span>)?(?=\s*<br|\s*<\/td|\s*[\r\n]|$)/gi;
+  if (styledThoiGianRegex.test(text)) {
+    text = text.replace(styledThoiGianRegex, `$1${thoiGianText}`);
+  } else {
+    const generalThoiGianRegex = /(^|[\n\r]|<br\s*\/?>)\s*\*?\*?(?:<span[^>]*>)?Thời gian thực hiện:\s*(?:<\/span>)?\*?\*?\s*(?:<[^>]+>)*\s*\*?\*?(?:ngày\s*[\d\.]+\s*tháng\s*[\d\.]+\s*năm\s*[\d\.]+|[^\n\r<]+?)(?:\*\*)?(?:<\/[^>]+>)*(?=\s*<br|\s*[\r\n]|$)/gim;
+    if (generalThoiGianRegex.test(text)) {
+      text = text.replace(generalThoiGianRegex, `$1<span style="color: blue">Thời gian thực hiện:</span> ${thoiGianText}`);
+    } else if (text.includes('KẾ HOẠCH BÀI DẠY')) {
+      // Nếu chưa có dòng Thời gian thực hiện, bổ sung ngay dưới dòng Tên bài học / Số tiết
+      text = text.replace(
+        /(<span style="color:\s*blue">Tên bài (?:học|dạy):<\/span>[^<\n\r]+?(?:<\/span>)?(?: - Tiết \d+)?(?:; <span style="color:\s*blue">Số tiết:<\/span>[^<\n\r]+?)?(?:\s*<br\s*\/?>)?)/i,
+        `$1<br />\n<span style="color: blue">Thời gian thực hiện:</span> ${thoiGianText}`
+      );
+    }
+  }
 
   // Làm sạch các câu chú thích trong ngoặc đơn ở Mục I
   text = cleanSectionI(text);
@@ -941,6 +964,17 @@ export default function App() {
     upgrade: '',
   });
 
+  // Quản lý ngày dạy / thời gian thực hiện độc lập cho từng chế độ
+  const [modeLessonDate, setModeLessonDate] = useState<{
+    new: string;
+    vbt: string;
+    upgrade: string;
+  }>({
+    new: '',
+    vbt: '',
+    upgrade: '',
+  });
+
   // Quản lý số tiết cần soạn và tổng số tiết độc lập cho từng chế độ
   const [modePeriods, setModePeriods] = useState<{
     new: { periods: string; totalPeriods: string };
@@ -979,6 +1013,7 @@ export default function App() {
   const isGenerating = generatingModes[mode];
   const attachedFiles = modeFiles[mode];
   const additionalInfo = modeAdditionalInfo[mode];
+  const lessonDate = modeLessonDate[mode];
   const periods = modePeriods[mode].periods;
   const totalPeriods = modePeriods[mode].totalPeriods;
   const selectedPeriod = modeSelectedPeriod[mode];
@@ -993,6 +1028,10 @@ export default function App() {
 
   const setAdditionalInfo = (val: string) => {
     setModeAdditionalInfo(prev => ({ ...prev, [mode]: val }));
+  };
+
+  const setLessonDate = (val: string) => {
+    setModeLessonDate(prev => ({ ...prev, [mode]: val }));
   };
 
   const setPeriods = (val: string) => {
@@ -1047,6 +1086,7 @@ export default function App() {
     setModeAdditionalInfo(prev => ({ ...prev, [mode]: '' }));
     setModeFiles(prev => ({ ...prev, [mode]: [] }));
     setResults(prev => ({ ...prev, [mode]: null }));
+    setModeLessonDate(prev => ({ ...prev, [mode]: '' }));
     setModePeriods(prev => ({ ...prev, [mode]: { periods: '1', totalPeriods: '1' } }));
     setModeSelectedPeriod(prev => ({ ...prev, [mode]: '1' }));
     setModeActiveTab(prev => ({ ...prev, [mode]: 'plan' }));
@@ -1257,7 +1297,8 @@ export default function App() {
         additionalInfo: finalAdditionalInfo,
         mode: currentMode,
         files: mediaFiles.length > 0 ? mediaFiles : undefined,
-        file: mediaFiles.length > 0 ? mediaFiles[0] : undefined // fallback
+        file: mediaFiles.length > 0 ? mediaFiles[0] : undefined, // fallback
+        lessonDate: lessonDate ? formatVietnameseDate(lessonDate) : undefined
       };
 
       // Kiểm tra API Key trước khi gọi trực tiếp Google Gemini API
@@ -1302,8 +1343,8 @@ export default function App() {
     } else {
       raw = repairSectionIIITable(raw);
     }
-    return syncHeaderSubjectAndGrade(raw, subject, grade, undefined, undefined, mode);
-  }, [result, subject, grade, mode]);
+    return syncHeaderSubjectAndGrade(raw, subject, grade, undefined, undefined, mode, lessonDate);
+  }, [result, subject, grade, mode, lessonDate]);
 
   // Cấu trúc danh sách từng tiết của bài học (Đảm bảo mỗi tiết đầy đủ từ I -> IV)
   const parsedPeriods = useMemo(() => {
@@ -1327,7 +1368,7 @@ export default function App() {
           return {
             id: `${num}`,
             label: `Tiết ${num}`,
-            content: syncHeaderSubjectAndGrade(adjusted, subject, grade, `${num}`, `${total}`, mode),
+            content: syncHeaderSubjectAndGrade(adjusted, subject, grade, `${num}`, `${total}`, mode, lessonDate),
           };
         });
       }
@@ -1355,7 +1396,7 @@ export default function App() {
           return {
             id: `${num}`,
             label: `Tiết ${num}`,
-            content: syncHeaderSubjectAndGrade(part, subject, grade, `${num}`, `${total}`, mode),
+            content: syncHeaderSubjectAndGrade(part, subject, grade, `${num}`, `${total}`, mode, lessonDate),
           };
         });
       }
@@ -1406,7 +1447,7 @@ export default function App() {
         return {
           id: `${num}`,
           label: `Tiết ${num}`,
-          content: syncHeaderSubjectAndGrade(completePeriodText, subject, grade, `${num}`, `${totalMatches}`, mode),
+          content: syncHeaderSubjectAndGrade(completePeriodText, subject, grade, `${num}`, `${totalMatches}`, mode, lessonDate),
         };
       });
     }
@@ -1420,7 +1461,7 @@ export default function App() {
         list.push({
           id: `${i}`,
           label: `Tiết ${i}`,
-          content: syncHeaderSubjectAndGrade(planContent, subject, grade, `${i}`, `${effectiveTotal}`, mode),
+          content: syncHeaderSubjectAndGrade(planContent, subject, grade, `${i}`, `${effectiveTotal}`, mode, lessonDate),
         });
       }
       return list;
@@ -1431,10 +1472,10 @@ export default function App() {
       {
         id: '1',
         label: 'Tiết 1',
-        content: syncHeaderSubjectAndGrade(planContent, subject, grade, '1', `${effectiveTotal}`, mode),
+        content: syncHeaderSubjectAndGrade(planContent, subject, grade, '1', `${effectiveTotal}`, mode, lessonDate),
       },
     ];
-  }, [planContent, periods, totalPeriods, subject, grade, mode]);
+  }, [planContent, periods, totalPeriods, subject, grade, mode, lessonDate]);
 
   // Nội dung KHBD hiển thị theo Tiết đã chọn (hoặc tất cả các tiết)
   const currentPlanToDisplay = useMemo(() => {
@@ -1513,13 +1554,13 @@ export default function App() {
     return title || 'Bài học';
   }, [planContent, additionalInfo]);
 
-  // Cấu trúc đặt tên tệp xuất Word (Filename Rule) chuẩn:
-  // [Môn học] - [Tên bài học] - Tiết [Số tiết]
+  // Cấu trúc đặt tên tệp xuất Word chuẩn theo yêu cầu:
+  // Môn học?_Tên bài?_tiết?
   // Ví dụ:
-  // + Tiết 1: TC Toán - Bài 1 Ôn tập các số đến 100 - Tiết 1.docx
-  // + Gộp cả 3 tiết: TC Toán - Bài 1 Ôn tập các số đến 100 - Tiết 1, 2, 3.docx
+  // + Tiết 1: Toán_Bài 1 Ôn tập các số đến 100_tiết 1.docx
+  // + Gộp cả 3 tiết: Toán_Bài 1 Ôn tập các số đến 100_tiết 1, 2, 3.docx
   const getWordExportFileName = (periodId?: string) => {
-    // 1. [Môn học]
+    // 1. Môn học
     let monHoc = (subject || 'Môn học').trim();
     if (mode === 'vbt') {
       if (!monHoc.startsWith('TC ') && (monHoc === 'Toán' || monHoc === 'Tiếng Việt')) {
@@ -1528,32 +1569,33 @@ export default function App() {
     }
     monHoc = monHoc.replace(/[\\/*?:"<>|]/g, '').trim();
 
-    // 2. [Tên bài học]
-    const tenBaiHoc = extractedLessonTitle.replace(/[\\/*?:"<>|]/g, '').trim() || 'Bài học';
+    // 2. Tên bài
+    let tenBaiHoc = extractedLessonTitle.replace(/[\\/*?:"<>|]/g, '').trim() || 'Bài học';
+    tenBaiHoc = tenBaiHoc.replace(/^[-_\s]+|[-_\s]+$/g, '').trim() || 'Bài học';
 
-    // 3. Tiết [Số tiết]
+    // 3. tiết
     const targetPeriod = periodId !== undefined ? periodId : selectedPeriod;
-    let tietPart = 'Tiết 1';
+    let tietPart = 'tiết 1';
 
     if (targetPeriod === 'all') {
       if (parsedPeriods.length > 1) {
         const nums = parsedPeriods.map(p => p.id).join(', ');
-        tietPart = `Tiết ${nums}`;
+        tietPart = `tiết ${nums}`;
       } else {
         const numCount = parseInt(periods, 10);
         if (numCount > 1) {
           const nums = Array.from({ length: numCount }, (_, i) => i + 1).join(', ');
-          tietPart = `Tiết ${nums}`;
+          tietPart = `tiết ${nums}`;
         } else {
-          tietPart = 'Tiết 1';
+          tietPart = 'tiết 1';
         }
       }
     } else {
-      tietPart = `Tiết ${targetPeriod || '1'}`;
+      tietPart = `tiết ${targetPeriod || '1'}`;
     }
 
-    // Kết hợp theo định dạng chuẩn: [Môn học] - [Tên bài học] - Tiết [Số tiết]
-    return `${monHoc} - ${tenBaiHoc} - ${tietPart}`;
+    // Kết hợp theo định dạng: Môn học_Tên bài_tiết
+    return `${monHoc}_${tenBaiHoc}_${tietPart}`;
   };
 
   const lessonPlanFileName = useMemo(() => {
@@ -1809,7 +1851,7 @@ export default function App() {
         htmlContent = clone.innerHTML;
       }
       
-      const slideFileName = `Slide - ${getWordExportFileName()}`;
+      const slideFileName = `Slide_${getWordExportFileName()}`;
       
       await exportToDocx(htmlContent, slideFileName, {
         title: `Thiết kế Slide: ${subject} - Lớp ${grade}`,
@@ -1833,7 +1875,7 @@ export default function App() {
 
     try {
       setIsExporting(true);
-      const promptFileName = `Prompt - ${getWordExportFileName()}`;
+      const promptFileName = `Prompt_${getWordExportFileName()}`;
       
       await exportPromptMarkdownToDocx(promptContent, promptFileName, {
         title: `DANH SÁCH PROMPT MINH HỌA & TƯƠNG TÁC: ${subject.toUpperCase()} - LỚP ${grade}`,
@@ -2165,6 +2207,67 @@ export default function App() {
                     </div>
                   </div>
                 )}
+              </div>
+
+              {/* Nút chọn ngày (dạng lịch tháng) đưa vào KHBD */}
+              <div className="space-y-1.5" id="lesson-date-section">
+                <div className="flex items-center justify-between">
+                  <label htmlFor="lesson-date-input" className="text-sm font-medium text-slate-700 flex items-center gap-1.5">
+                    <Calendar className="w-4 h-4 text-blue-600" />
+                    <span>Thời gian thực hiện (Chọn ngày)</span>
+                  </label>
+                  {lessonDate ? (
+                    <button
+                      type="button"
+                      onClick={() => setLessonDate('')}
+                      className="text-xs text-rose-500 hover:text-rose-700 hover:underline font-medium transition-colors"
+                      title="Xóa ngày đã chọn, quay về dạng mặc định (ngày ... tháng ... năm 202...)"
+                    >
+                      Xóa ngày
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const today = new Date();
+                        const y = today.getFullYear();
+                        const m = String(today.getMonth() + 1).padStart(2, '0');
+                        const d = String(today.getDate()).padStart(2, '0');
+                        setLessonDate(`${y}-${m}-${d}`);
+                      }}
+                      className="text-xs text-blue-600 hover:text-blue-800 hover:underline font-medium transition-colors"
+                      title="Chọn nhanh ngày hôm nay"
+                    >
+                      Hôm nay
+                    </button>
+                  )}
+                </div>
+
+                <div className="relative flex items-center">
+                  <input
+                    type="date"
+                    id="lesson-date-input"
+                    value={lessonDate}
+                    onChange={(e) => setLessonDate(e.target.value)}
+                    onClick={(e) => {
+                      try {
+                        (e.currentTarget as any).showPicker?.();
+                      } catch (err) {
+                        // fallback nếu trình duyệt không hỗ trợ showPicker
+                      }
+                    }}
+                    className="w-full px-3 py-2 pl-10 rounded-lg border border-slate-300 hover:border-blue-500 hover:border-2 hover:bg-blue-50/40 hover:shadow-md focus:ring-2 focus:ring-blue-600 focus:border-blue-600 outline-none transition-all duration-300 text-sm font-medium text-slate-800 cursor-pointer"
+                    title="Bấm để mở lịch tháng chọn ngày"
+                  />
+                  <Calendar className="w-4 h-4 text-blue-600 absolute left-3 pointer-events-none" />
+                </div>
+
+                <div className="text-xs text-slate-600 bg-slate-50 px-2.5 py-1.5 rounded-md flex items-center justify-between border border-slate-200">
+                  <span>Thời gian đưa vào KHBD:</span>
+                  <span className="font-semibold text-blue-800">
+                    {lessonDate ? formatVietnameseDate(lessonDate) : 'ngày ... tháng ... năm 202...'}
+                  </span>
+                </div>
               </div>
 
               <div className="space-y-1.5">

@@ -242,6 +242,23 @@ function getGenAI(): GoogleGenAI {
   return genAIClient;
 }
 
+export function formatVietnameseDate(dateStr: string): string {
+  if (!dateStr) return 'ngày ... tháng ... năm 202...';
+  if (dateStr.includes('ngày') && dateStr.includes('tháng') && dateStr.includes('năm')) {
+    return dateStr;
+  }
+  const parts = dateStr.split('-');
+  if (parts.length === 3) {
+    const year = parts[0];
+    const month = parseInt(parts[1], 10);
+    const day = parseInt(parts[2], 10);
+    if (!isNaN(month) && !isNaN(day)) {
+      return `ngày ${day} tháng ${month} năm ${year}`;
+    }
+  }
+  return dateStr;
+}
+
 export interface LessonPlanRequest {
   subject: string;
   grade: string;
@@ -261,6 +278,7 @@ export interface LessonPlanRequest {
     data: string; // base64
     name?: string;
   }>;
+  lessonDate?: string;
 }
 
 const SYSTEM_INSTRUCTION = `Vai trò: Bạn là một Chuyên gia Giáo dục Tiểu học cốt cán, chuyên gia thiết kế chương trình giảng dạy và cố vấn phương pháp sư phạm giàu kinh nghiệm. Hãy phân tích nội dung từ Sách giáo khoa (SGK), Vở bài tập (VBT) hoặc Kế hoạch bài dạy cũ (qua hình ảnh, PDF, Word hoặc văn bản) để xác định Tên bài học/Chủ đề và soạn một Kế hoạch bài dạy (KHBD) chuẩn xác, khoa học, thực tế, bám sát Chương trình GDPT 2018 và Công văn 2345/BGDĐT theo cấu trúc chuyên sâu sau:
@@ -764,7 +782,7 @@ HƯỚNG DẪN XỬ LÝ NÂNG CẤP KHBD CŨ:
      <h1 style="text-align: center; color: red;">KẾ HOẠCH BÀI DẠY</h1>
      <span style="color: blue">Môn:</span> <span style="color: red; font-weight: bold;">${request.subject}</span>; <span style="color: blue">Lớp:</span> ${request.grade}<br />
      <span style="color: blue">Tên bài học:</span> <span style="color: red; font-weight: bold;">${request.topic || '[Tên bài học đầy đủ]'}</span> - Tiết 1; <span style="color: blue">Số tiết:</span> 1 / ${request.periods || '1'} tiết<br />
-     <span style="color: blue">Thời gian thực hiện:</span> ngày ... tháng ... năm 202...<br />
+     <span style="color: blue">Thời gian thực hiện:</span> ${request.lessonDate ? formatVietnameseDate(request.lessonDate) : 'ngày ... tháng ... năm 202...'}<br />
 
      <span style="color: red; font-weight: bold;">I. YÊU CẦU CẦN ĐẠT:</span><br />
      <span style="color: blue; font-weight: bold;">- Qua bài học, học sinh thực hiện được:</span><br />
@@ -880,7 +898,7 @@ BẮT BUỘC TRÌNH BÀY ĐÚNG THỂ THỨC VÀ CẤU TRÚC CHO MỖI TIẾT TH
 <h1 style="text-align: center; color: red;">KẾ HOẠCH BÀI DẠY</h1>
 <span style="color: blue">Môn:</span> <span style="color: red; font-weight: bold;">${request.subject}</span>; <span style="color: blue">Lớp:</span> ${request.grade}<br />
 <span style="color: blue">Tên bài học:</span> <span style="color: red; font-weight: bold;">${cleanTopicUpper || '[TÊN BÀI HỌC IN HOA]'}</span> - Tiết {X}; <span style="color: blue">Số tiết:</span> {X} / ${totalPeriodsCount} tiết<br />
-<span style="color: blue">Thời gian thực hiện:</span> ngày ... tháng ... năm 202...<br />
+<span style="color: blue">Thời gian thực hiện:</span> ${request.lessonDate ? formatVietnameseDate(request.lessonDate) : 'ngày ... tháng ... năm 202...'}<br />
 
 <span style="color: red; font-weight: bold;">I. YÊU CẦU CẦN ĐẠT:</span><br />
 <span style="color: blue; font-weight: bold;">- Qua bài học, học sinh thực hiện được:</span><br />
@@ -963,7 +981,7 @@ TIÊU ĐỀ ĐẦU TIÊN:
 <h1 style="text-align: center; color: red;">KẾ HOẠCH BÀI DẠY</h1>
 <span style="color: blue">Môn:</span> <span style="color: red; font-weight: bold;">${request.subject}</span>; <span style="color: blue">Lớp:</span> ${request.grade}<br />
 <span style="color: blue">Tên bài học:</span> <span style="color: red; font-weight: bold;">${request.topic || '[Tên bài học đầy đủ]'}</span> - Tiết 1; <span style="color: blue">Số tiết:</span> 1 / ${request.periods || '1'} tiết<br />
-<span style="color: blue">Thời gian thực hiện:</span> ngày ... tháng ... năm 202...<br />
+<span style="color: blue">Thời gian thực hiện:</span> ${request.lessonDate ? formatVietnameseDate(request.lessonDate) : 'ngày ... tháng ... năm 202...'}<br />
  
 <span style="color: red; font-weight: bold;">I. YÊU CẦU CẦN ĐẠT:</span><br />
 <span style="color: blue; font-weight: bold;">- Qua bài học, học sinh thực hiện được:</span><br />
@@ -1081,7 +1099,7 @@ LƯU Ý ĐẶC BIỆT:
     // Đảm bảo tuyệt đối 100% tên môn học, lớp, tiết và tổng số tiết trùng khớp chính xác với menu người dùng chọn
     const curPeriod = request.currentPeriod || request.periods?.match(/^(\d+)/)?.[1] || '1';
     const totPeriods = request.totalPeriods || request.periods?.match(/(?:tổng|trên|\/)\s*(\d+)/i)?.[1] || request.periods || curPeriod || '1';
-    text = enforceSubjectAndGrade(text, request.subject, request.grade, curPeriod, totPeriods);
+    text = enforceSubjectAndGrade(text, request.subject, request.grade, curPeriod, totPeriods, request.lessonDate);
 
     // Đảm bảo Kế hoạch bài dạy (trước ---SLIDE_SEPARATOR---) không chứa bất kỳ dấu * nào theo yêu cầu người dùng
     if (text.includes('---SLIDE_SEPARATOR---')) {
@@ -1669,7 +1687,8 @@ export function enforceSubjectAndGrade(
   selectedSubject: string,
   selectedGrade?: string,
   currentPeriod?: string,
-  totalPeriods?: string
+  totalPeriods?: string,
+  lessonDate?: string
 ): string {
   if (!text || !selectedSubject) return text;
 
@@ -1777,6 +1796,27 @@ export function enforceSubjectAndGrade(
 
   // Dọn dẹp các thẻ <br /> liên tiếp thừa do việc xóa dòng tạo ra
   text = text.replace(/(<br\s*\/?>\s*){3,}/gi, '<br />\n<br />\n');
+
+  // 4. Chuẩn hóa dòng "Thời gian thực hiện:"
+  const thoiGianText = lessonDate && lessonDate.trim()
+    ? (lessonDate.includes('ngày') ? lessonDate.trim() : formatVietnameseDate(lessonDate))
+    : 'ngày ... tháng ... năm 202...';
+
+  const styledThoiGianRegex = /(<span style="color:\s*blue">Thời gian thực hiện:<\/span>\s*)(?:<span[^>]*>)?(?:\*\*)?(?:ngày\s*[\d\.]+\s*tháng\s*[\d\.]+\s*năm\s*[\d\.]+|[^\n\r<;]+)(?:\*\*)?(?:<\/span>)?(?=\s*<br|\s*<\/td|\s*[\r\n]|$)/gi;
+  if (styledThoiGianRegex.test(text)) {
+    text = text.replace(styledThoiGianRegex, `$1${thoiGianText}`);
+  } else {
+    const generalThoiGianRegex = /(^|[\n\r]|<br\s*\/?>)\s*\*?\*?(?:<span[^>]*>)?Thời gian thực hiện:\s*(?:<\/span>)?\*?\*?\s*(?:<[^>]+>)*\s*\*?\*?(?:ngày\s*[\d\.]+\s*tháng\s*[\d\.]+\s*năm\s*[\d\.]+|[^\n\r<]+?)(?:\*\*)?(?:<\/[^>]+>)*(?=\s*<br|\s*[\r\n]|$)/gim;
+    if (generalThoiGianRegex.test(text)) {
+      text = text.replace(generalThoiGianRegex, `$1<span style="color: blue">Thời gian thực hiện:</span> ${thoiGianText}`);
+    } else if (text.includes('KẾ HOẠCH BÀI DẠY')) {
+      // Nếu chưa có dòng Thời gian thực hiện, bổ sung ngay dưới dòng Tên bài học / Số tiết
+      text = text.replace(
+        /(<span style="color:\s*blue">Tên bài (?:học|dạy):<\/span>[^<\n\r]+?(?:<\/span>)?(?: - Tiết \d+)?(?:; <span style="color:\s*blue">Số tiết:<\/span>[^<\n\r]+?)?(?:\s*<br\s*\/?>)?)/i,
+        `$1<br />\n<span style="color: blue">Thời gian thực hiện:</span> ${thoiGianText}`
+      );
+    }
+  }
 
   // Làm sạch mục IV: Tuyệt đối không để tên học sinh cụ thể
   text = cleanSectionIV(text);
