@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Soạn KHBD Tiểu Học Có tích hợp</title>
+    <meta name="description" content="Ứng dụng hỗ trợ giáo viên tiểu học soạn mới hoặc nâng cấp KHBD cũ có tích hợp Năng lực số, Quyền con người, STEM, QP-AN, PCCC, ĐĐLS, Mizuiku, thiết kế Slide và bộ Prompt minh họa (ảnh, video, trò chơi tương tác)." />
+    <meta property="og:title" content="Soạn KHBD Tiểu Học Có tích hợp" />
+    <meta property="og:description" content="Ứng dụng hỗ trợ giáo viên tiểu học soạn mới hoặc nâng cấp KHBD cũ có tích hợp Năng lực số, Quyền con người, STEM, QP-AN, PCCC, ĐĐLS, Mizuiku, thiết kế Slide và bộ Prompt minh họa (ảnh, video, trò chơi tương tác)." />
+    <script>
+      (function() {
+        try {
+          var originalFetch = window.fetch;
+          if (typeof originalFetch === 'function') {
+            var boundFetch = originalFetch.bind(window);
+            var currentFetch = boundFetch;
+            Object.defineProperty(window, 'fetch', {
+              configurable: true,
+              enumerable: true,
+              get: function() {
+                return currentFetch;
+              },
+              set: function(newFetch) {
+                currentFetch = typeof newFetch === 'function' ? newFetch : boundFetch;
+              }
+            });
+            if (typeof globalThis !== 'undefined' && globalThis !== window) {
+              try {
+                Object.defineProperty(globalThis, 'fetch', {
+                  configurable: true,
+                  enumerable: true,
+                  get: function() {
+                    return currentFetch;
+                  },
+                  set: function(newFetch) {
+                    currentFetch = typeof newFetch === 'function' ? newFetch : boundFetch;
+                  }
+                });
+              } catch (e) {}
+            }
+          }
+        } catch (err) {
+          // Gracefully fallback
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

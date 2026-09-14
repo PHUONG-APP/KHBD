@@ -1,0 +1,6 @@
+{
+  "name": "Soạn KHBD Tiểu Học Có tích hợp",
+  "description": "Ứng dụng hỗ trợ giáo viên tiểu học soạn mới hoặc nâng cấp KHBD cũ có tích hợp Năng lực số, Quyền con người, STEM, QP-AN, PCCC, ĐĐLS, Mizuiku, thiết kế Slide và bộ Prompt minh họa (ảnh, video, trò chơi tương tác).",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
